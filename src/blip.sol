@@ -4,8 +4,8 @@ pragma solidity >=0.6.12;
 
 import "./org/clip.sol";
 
-interface ExtPipLike {
-    function src() external returns (address);
+interface OracleLike {
+    function read() external returns (bytes32);
 }
 
 interface BProtocolLike {
@@ -14,14 +14,15 @@ interface BProtocolLike {
 
 
 contract Blipper is Clipper {
-    address immutable public bprotocol;
+    address public bprotocol;
     uint256 public bee; // b.protocol discount
+    address public oracle;
 
     // --- Init ---
-    constructor(address vat_, address spotter_, address dog_, bytes32 ilk_, address bprotocol_) public
+    constructor(address vat_, address spotter_, address dog_, bytes32 ilk_, address oracle_) public
         Clipper(vat_, spotter_, dog_, ilk_)
     {
-        bprotocol = bprotocol_;
+        oracle = oracle_;
     }
 
     // --- Administration ---
@@ -30,7 +31,25 @@ contract Blipper is Clipper {
             bee = data;
             File(what, data);
         }
-        else super.file(what, data);
+        else {
+            locked = 0;
+            super.file(what, data);
+        }
+    }
+
+    function file(bytes32 what, address data) public override auth lock {
+        if (what == "bprotocol") {
+            bprotocol = data;
+            File(what, data);
+        }
+        else if(what == "oracle") {
+            oracle = data;
+            File(what, data);            
+        }
+        else {
+            locked = 0;
+            super.file(what, data);
+        }
     }    
 
 
@@ -39,27 +58,24 @@ contract Blipper is Clipper {
     // if mat has changed since the last poke, the resulting value will be
     // incorrect.
     function getMedianPrice() internal returns (uint256 feedPrice) {
-        (PipLike pip, ) = spotter.ilks(ilk);
-        (bytes32 wut, bool ok) = PipLike(ExtPipLike(address(pip)).src()).peek();
-        require(ok, "Blipper/invalid-price");
-
-        uint256 val = uint256(wut);
-        feedPrice = rdiv(mul(uint256(val), BLN), spotter.par());
+        feedPrice = uint256(OracleLike(oracle).read());
     }
 
     // --- Auction ---
     function blink(uint256 lot, uint256 tab, address usr, address kpr) public returns (uint256 amt, uint256 owe) {
         require(msg.sender == address(this), "Blipper/un-auth");
 
-        uint256 med = rmul(getMedianPrice(), bee);
+        uint256 med = rdiv(getMedianPrice(), bee);
+        uint ink = rmul(tab, WAD) / med;
 
-        if(tab / med <= lot) {
-            amt = tab / med;            
+        if(ink <= lot) {
+            amt = ink;            
             owe = tab;
         }
         else {
+            // TODO - handle partial liquidation - check if amount is enough if removing penelty
             amt = lot;
-            owe = mul(amt, med);
+            owe = rdiv(mul(amt, WAD), med);
         }
 
         BProtocolLike(bprotocol).prepareBite(ilk, amt, owe, med);

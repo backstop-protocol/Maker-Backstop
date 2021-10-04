@@ -75,6 +75,9 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
 
         feePool = _feePool;
         maxDiscount = _maxDiscount;
+
+        VatLike(_vat).hope(_pot);
+        VatLike(_vat).hope(_blipper);
     }
 
     function setParams(uint _A, uint _fee) external auth {

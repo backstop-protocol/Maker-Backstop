@@ -168,7 +168,7 @@ contract Clipper {
         else revert("Clipper/file-unrecognized-param");
         emit File(what, data);
     }
-    function file(bytes32 what, address data) external auth lock {
+    function file(bytes32 what, address data) public virtual auth lock {
         if (what == "spotter") spotter = SpotterLike(data);
         else if (what == "dog")    dog = DogLike(data);
         else if (what == "vow")    vow = data;
