@@ -73,9 +73,9 @@ contract Blipper is Clipper {
             owe = tab;
         }
         else {
-            // TODO - handle partial liquidation - check if amount is enough if removing penelty
             amt = lot;
-            owe = rdiv(mul(amt, WAD), med);
+            owe = mul(wmul(lot, med), RAY);
+            require(wmul(owe, dog.chop(ilk)) >= tab, "Blipper/low-ink");
         }
 
         BProtocolLike(bprotocol).prepareBite(ilk, amt, owe, med);
@@ -108,6 +108,7 @@ contract Blipper is Clipper {
         try this.blink(lot, tab, usr, kpr) returns(uint256 /*amt*/, uint256 /*owe*/) {
             // TODO - emit events
         } catch {
+            locked = 0;
             return super.kick(tab, lot, usr, kpr);
         }
     }
