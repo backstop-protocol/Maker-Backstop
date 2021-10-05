@@ -65,20 +65,26 @@ contract Blipper is Clipper {
     function blink(uint256 lot, uint256 tab, address usr, address kpr) public returns (uint256 amt, uint256 owe) {
         require(msg.sender == address(this), "Blipper/un-auth");
 
-        uint256 med = rdiv(getMedianPrice(), bee);
-        uint ink = rmul(tab, WAD) / med;
+        // real time oracle price
+        uint256 mid = getMedianPrice();
 
-        if(ink <= lot) {
-            amt = ink;            
+        // how much eth to get for the entire debt
+        uint256 ask = rmul(tab, WAD) / rdiv(mid, bee);
+
+        // how much dai to get for the entire collateral
+        uint256 bid = mul(wmul(lot, rmul(mid, bee)), RAY);
+
+        if(ask <= lot) {
+            amt = ask;            
             owe = tab;
         }
         else {
             amt = lot;
-            owe = mul(wmul(lot, med), RAY);
+            owe = bid;
             require(wmul(owe, dog.chop(ilk)) >= tab, "Blipper/low-ink");
         }
 
-        BProtocolLike(bprotocol).prepareBite(ilk, amt, owe, med);
+        BProtocolLike(bprotocol).prepareBite(ilk, amt, owe, mid);
 
         // execute the liquidation
         vat.move(bprotocol, vow, owe);

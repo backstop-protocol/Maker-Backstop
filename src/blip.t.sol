@@ -68,6 +68,11 @@ contract BammJoinTest is DssDeployTestBase {
         assertEq(vat.gem("ETH", address(bamm)), expectedEth, "gem balance");
         assertEq(vat.dai(address(0x123)), 1e27);
 
+        assertEq(vat.dai(address(vow)), daiDebt * 1e27);
+        assertEq(dog.Dirt(), 0);
+        (,,,uint dirt) = dog.ilks("ETH");
+        assertEq(dirt, 0);
+
         uint deltaGem = 100 ether - expectedEth;
         require(deltaGem > 0, "delta gem is 0");
         assertEq(gemBefore + deltaGem, gemAfter, "testHappyBark: unexpected delta gem");
@@ -83,7 +88,13 @@ contract BammJoinTest is DssDeployTestBase {
 
         uint expectedEth = 100 ether;
         assertEq(vat.gem("ETH", address(bamm)), expectedEth, "gem balance low ink");
-        assertEq(vat.dai(address(0x123)), 1e27);        
+        assertEq(vat.dai(address(0x123)), 1e27);
+
+        uint daiDebt = uint(100 ether * 110 * 105) / 100;
+        assertEq(vat.dai(address(vow)), daiDebt * 1e27);
+        assertEq(dog.Dirt(), 0);
+        (,,,uint dirt) = dog.ilks("ETH");
+        assertEq(dirt, 0);
     }
 
     // liquidation without enough eth to cover debt and 10% premium
@@ -97,7 +108,13 @@ contract BammJoinTest is DssDeployTestBase {
         uint kickAfter = blipper.kicks();
 
         assertEq(kickBefore + 1, kickAfter, "testBarkWithClipper: expected auction to start");
-        assertEq(vat.dai(address(0x123)), 1e27);        
+        assertEq(vat.dai(address(0x123)), 1e27);
+
+        uint daiDebt = 10000 ether * 113 / 100;
+
+        assertEq(dog.Dirt(), daiDebt * 1e27);
+        (,,,uint dirt) = dog.ilks("ETH");
+        assertEq(dirt, daiDebt * 1e27);
     }    
 }
 
