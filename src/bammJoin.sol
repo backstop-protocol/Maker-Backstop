@@ -101,32 +101,31 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         // TODO - sanity check with OSM?
     }
 
-    function deposit(uint wad) external {        
+    function deposit(uint wad) external {
+        pot.drip();
+        uint chi = pot.chi();
+
         // update share
-        uint usdValue = pot.pie(address(this));
+        uint usdValue = rmul(pot.pie(address(this)), chi);
         uint gemValue = vat.gem(ilk, address(this));
 
         uint price = fetchPrice();
         require(gemValue == 0 || price > 0, "deposit: feed is down");
 
-        uint totalValue = usdValue.add(gemValue.mul(price));
+        uint totalValue = usdValue.add(gemValue.mul(price) / WAD);
 
         // this is in theory not reachable. if it is, better halt deposits
         // the condition is equivalent to: (totalValue = 0) ==> (total = 0)
         require(totalValue > 0 || totalSupply == 0, "deposit: system is rekt");
 
-        uint newShare = PRECISION;
-        if(totalSupply > 0) newShare = totalValue.mul(mul(wad, RAY)) / totalSupply;
+        uint newShare = WAD;
+        if(totalSupply > 0) newShare = wad.mul(totalSupply) / totalValue;
 
         totalSupply = totalSupply.add(newShare);
         balanceOf[msg.sender] = balanceOf[msg.sender].add(newShare);
 
-        pot.drip();
-
-        uint chi = pot.chi();
-        uint rad = mul(chi, wad);
-        vat.move(msg.sender, address(this), rad);
-        pot.join(wad);
+        vat.move(msg.sender, address(this), mul(RAY, wad));
+        pot.join(rdiv(wad, chi));
 
         emit Transfer(address(0), msg.sender, newShare);
         emit UserDeposit(msg.sender, wad, newShare);        
@@ -165,12 +164,13 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         return n.mul(uint(10000 + bps)) / 10000;
     }
 
-    function getSwapGemAmount(uint wad) public view returns(uint gemAmount, uint feeGemAmount) {
-        uint usdBalance = pot.pie(address(this));
+    function getSwapGemAmount(uint wad) public view returns(uint gemAmount, uint feeGemAmount, uint chi) {
+        chi = pot.chi();
+        uint usdBalance = rmul(pot.pie(address(this)), chi);
         uint gemBalance = vat.gem(ilk, address(this));
 
         uint gem2usdPrice = fetchPrice();
-        if(gem2usdPrice == 0) return (0, 0); // feed is down
+        if(gem2usdPrice == 0) return (0, 0, chi); // feed is down
 
         uint gemUsdValue = gemBalance.mul(gem2usdPrice) / PRECISION;
         uint maxReturn = addBps(wad.mul(PRECISION) / gem2usdPrice, int(maxDiscount));
@@ -191,12 +191,12 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
 
     // get gem in return to LUSD
     function swap(uint wad, uint minGemReturn, address dest) public returns(uint) {
-        (uint gemAmount, uint feeGemAmount) = getSwapGemAmount(wad);
+        (uint gemAmount, uint feeGemAmount, uint chi) = getSwapGemAmount(wad);
 
         require(gemAmount >= minGemReturn, "swap: low return");
 
         vat.move(msg.sender, address(this), mul(wad, RAY));
-        pot.join(wad);
+        pot.join(rdiv(wad, chi));
 
         if(feeGemAmount > 0) vat.flux(ilk, address(this), feePool, feeGemAmount);
         vat.flux(ilk, address(this), dest, gemAmount);
@@ -206,9 +206,9 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         return gemAmount;
     }
 
-    function prepareBite(bytes32 /*ilk*/, uint256 /*amt*/, uint256 owe, uint256 /*med*/) external {
+    function prep(bytes32 /*ilk*/, uint256 /*amt*/, uint256 owe, uint256 /*med*/) external {
         // TODO - sanity checks on the price
-        require(msg.sender == blipper, "prepareBite: !auth");
+        require(msg.sender == blipper, "prep: !auth");
         uint chi = pot.chi();
         uint wad = (owe / chi).add(1);
         pot.exit(wad);
