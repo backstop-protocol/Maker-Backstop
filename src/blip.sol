@@ -9,7 +9,7 @@ interface OracleLike {
 }
 
 interface BProtocolLike {
-    function prepareBite(bytes32 ilk, uint256 amt, uint256 owe, uint256 med) external;
+    function prep(bytes32 ilk, uint256 amt, uint256 owe, uint256 mid) external;
 }
 
 
@@ -84,7 +84,7 @@ contract Blipper is Clipper {
             require(wmul(owe, dog.chop(ilk)) >= tab, "Blipper/low-ink");
         }
 
-        BProtocolLike(bprotocol).prepareBite(ilk, amt, owe, mid);
+        BProtocolLike(bprotocol).prep(ilk, amt, owe, mid);
 
         // execute the liquidation
         vat.move(bprotocol, vow, owe);
