@@ -6,8 +6,8 @@ import "./PriceFormula.sol";
 import { DSAuth } from "ds-auth/auth.sol";
 import { DSToken } from "ds-token/token.sol";
 
-interface PipLike {
-    function peek() external view returns(bytes32 val, bool has);
+interface OracleLike {
+    function read() external view returns (bytes32);
 }
 
 interface SpotterLike {
@@ -35,6 +35,7 @@ interface VatLike {
 contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     VatLike public immutable vat;
     SpotterLike public immutable spotter;
+    OracleLike public immutable oracle;
     bytes32 public immutable ilk;
     address public immutable blipper;
     PotLike public immutable pot;
@@ -59,6 +60,7 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     constructor(
         address _vat,
         address _spotter,
+        address _oracle,
         bytes32 _ilk,
         address _blipper,
         address _pot,
@@ -69,6 +71,7 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     {
         vat = VatLike(_vat);
         spotter = SpotterLike(_spotter);
+        oracle = OracleLike(_oracle);
         ilk = _ilk;
         blipper = _blipper;
         pot = PotLike(_pot);
@@ -92,12 +95,15 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     }
 
     function fetchPrice() public view returns(uint) {
+        return uint(oracle.read());
+
+        /*
         (address pip, ) = spotter.ilks(ilk);
         (bytes32 val, bool has) = PipLike(pip).peek();
         require(has, "bammJoin/invalid-price");
         uint BLN = 10 **  9;
         return rdiv(mul(uint256(val), BLN), spotter.par());
-
+        */
         // TODO - sanity check with OSM?
     }
 
@@ -125,7 +131,7 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         balanceOf[msg.sender] = balanceOf[msg.sender].add(newShare);
 
         vat.move(msg.sender, address(this), mul(RAY, wad));
-        pot.join(rdiv(wad, chi));
+        pot.join(rdiv(wad, chi).sub(1)); // avoid rounding errors
 
         emit Transfer(address(0), msg.sender, newShare);
         emit UserDeposit(msg.sender, wad, newShare);        

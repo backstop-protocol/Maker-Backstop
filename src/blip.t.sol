@@ -40,7 +40,7 @@ contract BammJoinTest is DssDeployTestBase {
         vat.frob("ETH", u, u, u, 100 ether, 10000 ether);
         assertEq(vat.dai(u), 10000 ether * 1e27);
 
-        bamm = new BAMMJoin(address(vat), address(spotter), "ETH", address(blipper), address(pot), address(0xfee), 400);
+        bamm = new BAMMJoin(address(vat), address(spotter), address(pipETH), "ETH", address(blipper), address(pot), address(0xfee), 400);
         blipper.file("bprotocol", address(bamm));
         blipper.file("bee", 105e25); /* 5% premium */
 
