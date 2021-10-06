@@ -43,13 +43,13 @@ contract BammJoinTest is DssDeployTestBase {
         vat.suck(address(0x5), address(this), 1000000000 ether * RAY);
         vat.slip("ETH", address(this), 100000000 ether);
 
-        // set chi to non 1 value
+        // set chi to non 1 ugly value
         this.rely(address(pot), address(this));
-        pot.file("dsr", 11e26);
-        hevm.warp(now+2);
+        pot.file("dsr", 1163123456789e15);
+        hevm.warp(now+1);
         pot.drip();
         pot.file("dsr", 0);
-        require(pot.chi() > 1, "chi is 1");
+        assertEq(pot.chi(), 1163123456789000000000000000, "chi");        
 
         vat.move(address(this), address(u1), 1000000 ether * RAY);
         vat.move(address(this), address(u2), 1000000 ether * RAY);
@@ -61,8 +61,8 @@ contract BammJoinTest is DssDeployTestBase {
     }
 
     function assertEqualApproxWad(uint a, uint b, string memory err) internal {
-        if(a > b + 10) assertEq(a, b, err);
-        if(b > a + 10) assertEq(a, b, err);
+        if(a > b + 20) assertEq(a, b, err);
+        if(b > a + 20) assertEq(a, b, err);
     }
 
     function assertEqualApproxRad(uint a, uint b, string memory err) internal {
