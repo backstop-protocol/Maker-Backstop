@@ -170,13 +170,13 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         return n.mul(uint(10000 + bps)) / 10000;
     }
 
-    function getSwapGemAmount(uint wad) public view returns(uint gemAmount, uint feeGemAmount, uint chi) {
+    function getSwapGemAmount(uint wad) public view returns(uint gemAmount, uint chi) {
         chi = pot.chi();
         uint usdBalance = rmul(pot.pie(address(this)), chi);
         uint gemBalance = vat.gem(ilk, address(this));
 
         uint gem2usdPrice = fetchPrice();
-        if(gem2usdPrice == 0) return (0, 0, chi); // feed is down
+        if(gem2usdPrice == 0) return (0, chi); // feed is down
 
         uint gemUsdValue = gemBalance.mul(gem2usdPrice) / PRECISION;
         uint maxReturn = addBps(wad.mul(PRECISION) / gem2usdPrice, int(maxDiscount));
@@ -191,20 +191,23 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         if(gemBalance < basicGemReturn) basicGemReturn = gemBalance; // cannot give more than balance 
         if(maxReturn < basicGemReturn) basicGemReturn = maxReturn;
 
-        gemAmount = addBps(basicGemReturn, -int(fee));
-        feeGemAmount = basicGemReturn.sub(gemAmount); // TODO - revise fees
+        gemAmount = basicGemReturn;
     }
 
     // get gem in return to LUSD
     function swap(uint wad, uint minGemReturn, address dest) public returns(uint) {
-        (uint gemAmount, uint feeGemAmount, uint chi) = getSwapGemAmount(wad);
+        (uint gemAmount, uint chi) = getSwapGemAmount(wad);
 
         require(gemAmount >= minGemReturn, "swap: low return");
 
         vat.move(msg.sender, address(this), mul(wad, RAY));
-        pot.join(rdiv(wad, chi));
 
-        if(feeGemAmount > 0) vat.flux(ilk, address(this), feePool, feeGemAmount);
+        uint feeWad = (addBps(wad, int(fee))).sub(wad);
+        if(feeWad > 0) vat.move(address(this), feePool, feeWad * RAY);
+
+        uint depositAmount = rdiv(wad.sub(feeWad), chi);
+        pot.join(depositAmount.sub(1)); // avoid rounding errors reverts
+
         vat.flux(ilk, address(this), dest, gemAmount);
 
         emit RebalanceSwap(msg.sender, wad, gemAmount, now);
