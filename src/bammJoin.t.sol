@@ -222,6 +222,66 @@ contract BammJoinTest is DssDeployTestBase {
         (uint retGem, uint chi) = bamm.getSwapGemAmount(1000e18);
         assertEq(retGem, 1e18, "unexpected retGem");
         assertEq(chi, pot.chi(), "unexpected chi");
+    }
+
+    // swap tests - without fee. with fee. and revert on low return
+    function testSwapNoFee() public {
+        bamm.setParams(20, 0);
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 2e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        uint qty = 105e18;
+        (uint retGem,) = bamm.getSwapGemAmount(qty);        
+
+        uint daiBefore = vat.dai(address(this));
+        uint potBefore = vat.dai(address(pot));
+
+        bamm.swap(qty, 1, address(0xddd));
+
+        uint daiAfter = vat.dai(address(this));
+        uint potAfter = vat.dai(address(pot));        
+        uint gem = vat.gem("ETH", address(0xddd));
+
+        assertEq(daiBefore - daiAfter, qty * RAY, "unexpected this dai balance");
+        assertEqualApproxRad(potAfter - potBefore, qty * RAY, "unexpected this pot balance");        
+        assertEq(gem, retGem, "unexpected gem balance");
+    }
+
+    function testSwapWithFee() public {
+        bamm.setParams(20, 100); // 1% fee
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 2e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        uint qty = 105e18;
+        (uint retGem,) = bamm.getSwapGemAmount(qty);        
+
+        uint daiBefore = vat.dai(address(this));
+        uint potBefore = vat.dai(address(pot));
+
+        bamm.swap(qty, 1, address(0xddd));
+
+        uint daiAfter = vat.dai(address(this));
+        uint potAfter = vat.dai(address(pot));        
+        uint gem = vat.gem("ETH", address(0xddd));
+
+        assertEq(daiBefore - daiAfter, qty * RAY, "unexpected this dai balance");
+        // account for fees
+        assertEqualApproxRad(potAfter - potBefore, qty * RAY * 99 / 100, "unexpected this pot balance");
+        assertEqualApproxRad(vat.dai(address(0xfee)), qty * RAY / 100, "unexpected fee balance");
+        assertEq(gem, retGem, "unexpected gem balance");
+    }
+
+    function testFailSwapLowReturn() public {
+        bamm.setParams(20, 100); // 1% fee
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 2e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        uint qty = 105e18;
+
+        bamm.swap(qty, qty * 106, address(0xddd));
     }    
 }
 
