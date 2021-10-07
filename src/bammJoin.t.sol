@@ -58,6 +58,8 @@ contract BammJoinTest is DssDeployTestBase {
         u1.doHope(vat, bamm);
         u2.doHope(vat, bamm);
         u3.doHope(vat, bamm);
+
+        vat.hope(address(bamm));        
     }
 
     function assertEqualApproxWad(uint a, uint b, string memory err) internal {
@@ -121,7 +123,6 @@ contract BammJoinTest is DssDeployTestBase {
     }
 
     function testDepositWithdrawWithGem() public {
-        vat.hope(address(bamm));
         bamm.deposit(10 ether);
         vat.flux("ETH", address(this), address(bamm), 1 ether);
         pipETH.poke(bytes32(uint(10 * 1e18)));
@@ -171,5 +172,56 @@ contract BammJoinTest is DssDeployTestBase {
             assertEqualPlusMinus1(ret, excpectedResult[i], "unexpected price");
         }
     }
+
+    function testGetSwapAmountExceedsDiscount() public {
+        // price = 105
+        // dai deposit = 6000e18
+        // A = 20
+        // gem = 39799999999999999975
+        // qty wad = 105e16
+        // expected gem return = 104e16
+
+        bamm.setParams(20, 0);
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 100e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        (uint retGem, uint chi) = bamm.getSwapGemAmount(105e18);
+        assertEq(retGem, 104e16, "unexpected retGem");
+        assertEq(chi, pot.chi(), "unexpected chi");
+    }
+
+    function testGetSwapAmountHappy() public {
+        // price = 105
+        // dai deposit = 6000e18
+        // A = 20
+        // qty wad = 105e16
+        // expected gem return = 104e16
+
+        bamm.setParams(20, 0);
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 2e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        uint qty = 105e18;
+        uint xbalance = 6000e18;
+        uint ybalance = 2e18 * 105 * 2 + xbalance;
+        uint expectedRet = (bamm.getReturn(qty, xbalance, ybalance, 20)) / 105;
+
+        (uint retGem, uint chi) = bamm.getSwapGemAmount(qty);
+        assertEq(retGem, expectedRet, "unexpected retGem");
+        assertEq(chi, pot.chi(), "unexpected chi");
+    }
+
+    function testGetSwapAmountExceedBalance() public {
+        bamm.setParams(20, 0);
+        bamm.deposit(6000e18);
+        vat.flux("ETH", address(this), address(bamm), 1e18);
+        pipETH.poke(bytes32(uint(105e18)));
+
+        (uint retGem, uint chi) = bamm.getSwapGemAmount(1000e18);
+        assertEq(retGem, 1e18, "unexpected retGem");
+        assertEq(chi, pot.chi(), "unexpected chi");
+    }    
 }
 

@@ -96,14 +96,6 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
 
     function fetchPrice() public view returns(uint) {
         return uint(oracle.read());
-
-        /*
-        (address pip, ) = spotter.ilks(ilk);
-        (bytes32 val, bool has) = PipLike(pip).peek();
-        require(has, "bammJoin/invalid-price");
-        uint BLN = 10 **  9;
-        return rdiv(mul(uint256(val), BLN), spotter.par());
-        */
         // TODO - sanity check with OSM?
     }
 
@@ -224,9 +216,9 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     }
 
     function pottify() external {
+        pot.drip();        
         uint chi = pot.chi();
         uint rad = vat.dai(address(this));
-        pot.drip();
         pot.join(rad / chi);
     }
 }
