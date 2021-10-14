@@ -3,6 +3,8 @@ pragma solidity >=0.6.12;
 import { DssDeployTestBase, Vat } from "dss-deploy/DssDeploy.t.base.sol";
 import { Blipper } from "./blip.sol";
 import { BAMMJoin } from "./bammJoin.sol";
+import { CToken } from "./mock/ctoken.sol";
+import { DSToken } from "ds-token/token.sol";
 
 contract BammJoinTest is DssDeployTestBase {
     BAMMJoin bamm;
@@ -40,16 +42,35 @@ contract BammJoinTest is DssDeployTestBase {
         vat.frob("ETH", u, u, u, 100 ether, 10000 ether);
         assertEq(vat.dai(u), 10000 ether * 1e27);
 
-        bamm = new BAMMJoin(address(vat), address(spotter), address(pipETH), "ETH", address(blipper), address(pot), address(0xfee), 400);
+        CToken cDai = new CToken(address(dai));
+
+        bamm = new BAMMJoin(address(vat),
+                            address(spotter),
+                            address(pipETH),
+                            "ETH",
+                            address(blipper),
+                            address(dai),
+                            address(daiJoin),
+                            address(cDai),
+                            address(0xfee),
+                            400,
+                            address(0xc),
+                            address(new DSToken("comp")));
         blipper.file("bprotocol", address(bamm));
-        blipper.file("bee", 105e25); /* 5% premium */
+        blipper.file("bee", 105e25); // 5% premium
 
         vat.suck(address(0x5), address(this), 1000000 ether * 1e27);
-        vat.hope(address(bamm));
+        assertEq(vat.dai(address(this)),      1010000 ether * 1e27);
+        vat.hope(address(daiJoin));
+        daiJoin.exit(address(this), 20000 ether);
+
+        dai.approve(address(bamm), 20000 ether);
         bamm.deposit(20000 ether);
         
         assertEq(bamm.balanceOf(address(this)), 1e18);
         assertEq(vat.gem("ETH", address(bamm)), uint(0), "gem balance should be 0");
+        assertEq(dai.balanceOf(address(cDai)), 20000 ether);
+        assertEq(cDai.balanceOfUnderlying(address(bamm)), 20000 ether);        
     }
 
     // liquidation with enough eth to cover debt
