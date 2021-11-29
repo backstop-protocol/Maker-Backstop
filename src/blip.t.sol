@@ -90,8 +90,9 @@ contract BammJoinTest is DssDeployTestBase {
         assertEq(vat.gem("ETH", address(bamm)), expectedEth, "gem balance low ink");
         assertEq(vat.dai(address(0x123)), 1e27);
 
-        uint daiDebt = uint(100 ether * 110 * 105) / 100;
-        assertEq(vat.dai(address(vow)), daiDebt * 1e27);
+        // 100 ether to dai with 5% premium
+        uint daiDebt = 1e27 * uint(100 ether * 110 * 100) / 105;
+        assertEq(vat.dai(address(vow)), daiDebt);
         assertEq(dog.Dirt(), 0);
         (,,,uint dirt) = dog.ilks("ETH");
         assertEq(dirt, 0);

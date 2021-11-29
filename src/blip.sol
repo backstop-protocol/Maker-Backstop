@@ -72,7 +72,7 @@ contract Blipper is Clipper {
         uint256 ask = rmul(tab, WAD) / rdiv(mid, bee);
 
         // how much dai to get for the entire collateral
-        uint256 bid = mul(wmul(lot, rmul(mid, bee)), RAY);
+        uint256 bid = rdiv(mul(wmul(lot, mid), RAY), bee);
 
         if(ask <= lot) {
             amt = ask;            
