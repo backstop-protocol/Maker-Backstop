@@ -2,7 +2,17 @@
 
 pragma solidity >=0.6.12;
 
-import "./org/clip.sol";
+interface VatLike {
+    function move(address,address,uint256) external;
+    function flux(bytes32,address,address,uint256) external;
+    function ilks(bytes32) external returns (uint256, uint256, uint256, uint256, uint256);
+    function suck(address,address,uint256) external;
+}
+
+interface DogLike {
+    function chop(bytes32) external returns (uint256);
+    function digs(bytes32, uint256) external;
+}
 
 interface OracleLike {
     function read() external returns (bytes32);
@@ -12,46 +22,117 @@ interface BProtocolLike {
     function prep(bytes32 ilk, uint256 amt, uint256 owe, uint256 mid) external;
 }
 
+interface ClipperLike {
+    function dog() external view returns(DogLike);
+    function vow() external view returns(address);
+    function chip() external view returns(uint64);
+    function tip() external view returns(uint192);
+    function stopped() external view returns(uint256);
 
-contract Blipper is Clipper {
+    function kick(
+        uint256 tab,
+        uint256 lot,
+        address usr,
+        address kpr
+    ) external returns (uint256 id);
+}
+
+
+contract Blipper {
+    // --- Auth ---
+    mapping (address => uint256) public wards;
+    function rely(address usr) external auth { wards[usr] = 1; emit Rely(usr); }
+    function deny(address usr) external auth { wards[usr] = 0; emit Deny(usr); }
+    modifier auth {
+        require(wards[msg.sender] == 1, "Blipper/not-authorized");
+        _;
+    }
+
+    // --- Clipper Data ---
+    bytes32 immutable public ilk;   // Collateral type of this Clipper
+    VatLike immutable public vat;   // Core CDP Engine
+    DogLike public dog;   // Liquidation module
+    address public vow;   // Recipient of dai raised in auctions
+    uint64  public chip;  // Percentage of tab to suck from vow to incentivize keepers         [wad]
+    uint192 public tip;   // Flat fee to suck from vow to incentivize keepers                  [rad]
+
+    // --- B.Protocol Data ---
+    address public clipper;
     address public bprotocol;
     uint256 public bee; // b.protocol discount
     address public oracle;
 
+    // --- Events ---
+    event Rely(address indexed usr);
+    event Deny(address indexed usr);
+
+    event File(bytes32 indexed what, uint256 data);
+    event File(bytes32 indexed what, address data);
+
+    event Blip(
+        uint256 tab,
+        uint256 lot,
+        address usr,
+        address kpr,
+        uint256 amt,
+        uint256 owe
+    );
+    
     // --- Init ---
-    constructor(address vat_, address spotter_, address dog_, bytes32 ilk_, address oracle_) public
-        Clipper(vat_, spotter_, dog_, ilk_)
-    {
+    constructor(address vat_, bytes32 ilk_, address oracle_) public
+    {        
+        vat = VatLike(vat_);
+        ilk = ilk_;
         oracle = oracle_;
+
+        wards[msg.sender] = 1;
+        emit Rely(msg.sender);        
     }
 
     // --- Administration ---
-    function file(bytes32 what, uint256 data) public override auth lock {
-        if (what == "bee") {
-            bee = data;
-            File(what, data);
-        }
-        else {
-            locked = 0;
-            super.file(what, data);
-        }
+    function file(bytes32 what, uint256 data) external auth {
+        if (what == "bee") bee = data;
+        else revert("Blipper/file-unrecognized-param");
+
+        emit File(what, data);        
     }
 
-    function file(bytes32 what, address data) public override auth lock {
-        if (what == "bprotocol") {
-            bprotocol = data;
-            File(what, data);
-        }
-        else if(what == "oracle") {
-            oracle = data;
-            File(what, data);            
-        }
-        else {
-            locked = 0;
-            super.file(what, data);
-        }
+    function file(bytes32 what, address data) external auth {
+        if (what == "bprotocol")    bprotocol = data;
+        else if(what == "oracle")   oracle = data;
+        else if(what == "clipper")  clipper = data;
+
+        else revert("Blipper/file-unrecognized-param");
+
+        emit File(what, data);        
     }    
 
+    // --- Math ---
+    uint256 constant BLN = 10 **  9;
+    uint256 constant WAD = 10 ** 18;
+    uint256 constant RAY = 10 ** 27;
+
+    function min(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = x <= y ? x : y;
+    }
+    function add(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require((z = x + y) >= x);
+    }
+    function sub(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require((z = x - y) <= x);
+    }
+    function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require(y == 0 || (z = x * y) / y == x);
+    }
+    function wmul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = mul(x, y) / WAD;
+    }
+    function rmul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = mul(x, y) / RAY;
+    }
+    function rdiv(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = mul(x, RAY) / y;
+    }    
 
     // get the price directly from the OSM
     // Could get this from rmul(Vat.ilks(ilk).spot, Spotter.mat()) instead, but
@@ -72,7 +153,7 @@ contract Blipper is Clipper {
         uint256 ask = rmul(tab, WAD) / rdiv(mid, bee);
 
         // how much dai to get for the entire collateral
-        uint256 bid = mul(wmul(lot, rmul(mid, bee)), RAY);
+        uint256 bid = mul(mul(lot, BLN), rdiv(mid, bee));
 
         if(ask <= lot) {
             amt = ask;            
@@ -110,12 +191,22 @@ contract Blipper is Clipper {
         uint256 lot,  // Collateral             [wad]
         address usr,  // Address that will receive any leftover collateral
         address kpr   // Address that will receive incentives
-    ) public auth lock isStopped(1) override returns (uint256 id) {
-        try this.blink(lot, tab, usr, kpr) returns(uint256 /*amt*/, uint256 /*owe*/) {
-            // TODO - emit events
+    ) public auth returns (uint256 id) {
+        require(ClipperLike(clipper).stopped() < 1, "Blipper/stopped-incorrect");
+
+        try this.blink(lot, tab, usr, kpr) returns(uint256 amt, uint256 owe) {
+            emit Blip(tab, lot, usr, kpr, amt, owe);
+            return 0;
         } catch {
-            locked = 0;
-            return super.kick(tab, lot, usr, kpr);
+            return ClipperLike(clipper).kick(tab, lot, usr, kpr);
         }
     }
+
+    // Public function to update the cached clipper params.
+    function upparams() public {
+        dog = ClipperLike(clipper).dog();
+        vow = ClipperLike(clipper).vow();
+        chip = ClipperLike(clipper).chip();
+        tip = ClipperLike(clipper).tip();
+    }    
 }
