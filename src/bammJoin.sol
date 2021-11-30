@@ -15,12 +15,22 @@ interface SpotterLike {
     function ilks(bytes32) external view returns (address, uint256);
 }
 
-interface PotLike {
-    function drip() external returns (uint tmp);
-    function join(uint wad) external;
-    function exit(uint wad) external;
-    function pie(address) external view returns(uint);
-    function chi() external view returns(uint);    
+interface CTokenLike {
+    function mint(uint mintAmount) external returns (uint);
+    function redeemUnderlying(uint redeemAmount) external returns (uint);
+    function balanceOfUnderlying(address account) external view returns (uint);
+}
+
+interface GemLike {
+    function approve(address, uint256) external returns(bool);
+    function transfer(address, uint256) external returns(bool);
+    function transferFrom(address, address, uint256) external returns(bool);
+    function balanceOf(address) view external returns(uint);
+}
+
+interface DaiJoinLike {
+    function join(address usr, uint wad) external;
+    function exit(address usr, uint wad) external;
 }
 
 interface VatLike {
@@ -38,7 +48,9 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     OracleLike public immutable oracle;
     bytes32 public immutable ilk;
     address public immutable blipper;
-    PotLike public immutable pot;
+    CTokenLike public immutable cDai;
+    GemLike public immutable dai;
+    DaiJoinLike public immutable daiJoin;
 
 
     address public immutable feePool;
@@ -63,9 +75,13 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         address _oracle,
         bytes32 _ilk,
         address _blipper,
-        address _pot,
+        address _dai,
+        address _daiJoin,
+        address _cDai,
         address _feePool,
-        uint    _maxDiscount)
+        uint    _maxDiscount,
+        address _autoCompounder,
+        address _crop)
         public
         DSToken("BMB") // TODO better name for token
     {
@@ -74,13 +90,19 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         oracle = OracleLike(_oracle);
         ilk = _ilk;
         blipper = _blipper;
-        pot = PotLike(_pot);
+
+        dai = GemLike(_dai);
+        daiJoin = DaiJoinLike(_daiJoin);
+        cDai = CTokenLike(_cDai);
 
         feePool = _feePool;
         maxDiscount = _maxDiscount;
 
-        VatLike(_vat).hope(_pot);
+        require(GemLike(_dai).approve(_cDai, uint(-1)), "constructor/dai-allowance-failed");
+        require(GemLike(_dai).approve(_daiJoin, uint(-1)), "constructor/dai-allowance-failed");        
         VatLike(_vat).hope(_blipper);
+        VatLike(_vat).hope(_daiJoin);        
+        require(GemLike(_crop).approve(_autoCompounder, uint(-1)), "constructor/dai-allowance-failed");
     }
 
     function setParams(uint _A, uint _fee) external auth {
@@ -100,11 +122,8 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     }
 
     function deposit(uint wad) external {
-        pot.drip();
-        uint chi = pot.chi();
-
         // update share
-        uint usdValue = rmul(pot.pie(address(this)), chi);
+        uint usdValue = cDai.balanceOfUnderlying(address(this));
         uint gemValue = vat.gem(ilk, address(this));
 
         uint price = fetchPrice();
@@ -122,8 +141,9 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         totalSupply = totalSupply.add(newShare);
         balanceOf[msg.sender] = balanceOf[msg.sender].add(newShare);
 
-        vat.move(msg.sender, address(this), mul(RAY, wad));
-        pot.join(rdiv(wad, chi).sub(1)); // avoid rounding errors
+        // deposit the wad
+        require(dai.transferFrom(msg.sender, address(this), wad), "deposit/transferFrom-failed");
+        require(cDai.mint(wad) == 0, "deposit/cToken-mint-failed");
 
         emit Transfer(address(0), msg.sender, newShare);
         emit UserDeposit(msg.sender, wad, newShare);        
@@ -132,17 +152,15 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     function withdraw(uint numShares) external {
         require(balanceOf[msg.sender] >= numShares, "withdraw: insufficient balance");
 
-        uint usdValue = pot.pie(address(this));
+        uint usdValue = cDai.balanceOfUnderlying(address(this));
         uint gemValue = vat.gem(ilk, address(this));
 
         uint usdAmount = usdValue.mul(numShares).div(totalSupply);
         uint gemAmount = gemValue.mul(numShares).div(totalSupply);
 
-        uint chi = pot.chi();
-        uint rad = usdAmount.mul(chi);
-
-        pot.exit(usdAmount);
-        vat.move(address(this), msg.sender, rad);
+        // todo - can this withdraw less than usdAmount due to rounding errors?
+        require(cDai.redeemUnderlying(usdAmount) == 0, "withdraw/redeemUnderlying-failed");
+        require(dai.transfer(msg.sender, usdAmount), "withdraw/transfer-failed");
 
         if(gemAmount > 0) {
             vat.flux(ilk, address(this), msg.sender, gemAmount);
@@ -162,13 +180,12 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
         return n.mul(uint(10000 + bps)) / 10000;
     }
 
-    function getSwapGemAmount(uint wad) public view returns(uint gemAmount, uint chi) {
-        chi = pot.chi();
-        uint usdBalance = rmul(pot.pie(address(this)), chi);
+    function getSwapGemAmount(uint wad) public view returns(uint gemAmount) {
+        uint usdBalance = cDai.balanceOfUnderlying(address(this));
         uint gemBalance = vat.gem(ilk, address(this));
 
         uint gem2usdPrice = fetchPrice();
-        if(gem2usdPrice == 0) return (0, chi); // feed is down
+        if(gem2usdPrice == 0) return (0); // feed is down
 
         uint gemUsdValue = gemBalance.mul(gem2usdPrice) / PRECISION;
         uint maxReturn = addBps(wad.mul(PRECISION) / gem2usdPrice, int(maxDiscount));
@@ -188,17 +205,17 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
 
     // get gem in return to LUSD
     function swap(uint wad, uint minGemReturn, address dest) public returns(uint) {
-        (uint gemAmount, uint chi) = getSwapGemAmount(wad);
+        uint gemAmount = getSwapGemAmount(wad);
 
         require(gemAmount >= minGemReturn, "swap: low return");
 
-        vat.move(msg.sender, address(this), mul(wad, RAY));
+        require(dai.transferFrom(msg.sender, address(this), wad), "swap/transferFrom-failed");
 
         uint feeWad = (addBps(wad, int(fee))).sub(wad);
-        if(feeWad > 0) vat.move(address(this), feePool, feeWad * RAY);
+        if(feeWad > 0) require(dai.transfer(feePool, feeWad), "swap/transfer-failed");
 
-        uint depositAmount = rdiv(wad.sub(feeWad), chi);
-        pot.join(depositAmount.sub(1)); // avoid rounding errors reverts
+        uint depositAmount = wad.sub(feeWad);
+        require(cDai.mint(depositAmount) == 0, "swap/ctoken-mint-failed");
 
         vat.flux(ilk, address(this), dest, gemAmount);
 
@@ -210,15 +227,15 @@ contract BAMMJoin is PriceFormula, DSAuth, DSToken {
     function prep(bytes32 /*ilk*/, uint256 /*amt*/, uint256 owe, uint256 /*med*/) external {
         // TODO - sanity checks on the price
         require(msg.sender == blipper, "prep: !auth");
-        uint chi = pot.chi();
-        uint wad = (owe / chi).add(1);
-        pot.exit(wad);
+        uint wad = (owe / RAY).add(1); // avoid rounding errors
+        require(cDai.redeemUnderlying(wad) == 0, "prep/redeemUnderlying-failed");
+        daiJoin.join(address(this), wad);
     }
 
-    function pottify() external {
-        pot.drip();        
-        uint chi = pot.chi();
-        uint rad = vat.dai(address(this));
-        pot.join(rad / chi);
+    // callable by anyone
+    function crop() external {
+        // this is just in case some dai got stuck in the vat
+        daiJoin.exit(address(this), vat.dai(address(this)) / RAY);
+        require(cDai.mint(dai.balanceOf(address(this))) == 0, "prottify/ctoken-mint-failed");
     }
 }
