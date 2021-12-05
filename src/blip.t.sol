@@ -1,6 +1,6 @@
 pragma solidity >=0.6.12;
 
-import { DssDeployTestBase, Vat } from "dss-deploy/DssDeploy.t.base.sol";
+import { DssDeployTestBase, Vat, Clipper } from "dss-deploy/DssDeploy.t.base.sol";
 import { Blipper } from "./blip.sol";
 import { BAMMJoin } from "./bammJoin.sol";
 import { CToken } from "./mock/ctoken.sol";
@@ -9,6 +9,7 @@ import { DSToken } from "ds-token/token.sol";
 contract BammJoinTest is DssDeployTestBase {
     BAMMJoin bamm;
     Blipper blipper;
+    Clipper clipper;
 
     function setUp() override public {
         super.setUp();
@@ -19,19 +20,25 @@ contract BammJoinTest is DssDeployTestBase {
 
         assertEq(uint(1), dog.wards(address(this)));
 
-        blipper = new Blipper(address(vat), address(spotter), address(dog), "ETH", address(pipETH));
+        clipper = new Clipper(address(vat), address(spotter), address(dog), "ETH");
+
+        blipper = new Blipper(address(vat), "ETH", address(pipETH));
         dog.file("ETH", "clip", address(blipper));
         dog.file("Hole", 10000000e45);
         dog.file("ETH", "hole", 10000000e45);
         dog.file("ETH", "chop", 113e16);        
 
-        blipper.file("vow", address(vow));
-        blipper.file("buf", 2e27);
-        blipper.file("tip", 1e27);
+        clipper.file("vow", address(vow));
+        clipper.file("buf", 2e27);
+        clipper.file("tip", 1e27);
+        clipper.upchost();
 
         this.rely(address(vat), address(blipper));
+        this.rely(address(vat), address(clipper));        
         this.rely(address(dog), address(blipper));
         blipper.rely(address(dog));
+        clipper.rely(address(blipper));
+        assertEq(uint(1), clipper.wards(address(blipper)));
 
         weth.mint(1e30);
         weth.approve(address(ethJoin), uint(-1));
@@ -57,7 +64,12 @@ contract BammJoinTest is DssDeployTestBase {
                             address(0xc),
                             address(new DSToken("comp")));
         blipper.file("bprotocol", address(bamm));
-        blipper.file("bee", 105e25); // 5% premium
+
+        blipper.file("bee", 105e25); /* 5% premium */
+        blipper.file("clipper", address(clipper));
+        blipper.upparams();
+
+        assertEq(blipper.clipper(), address(clipper));
 
         vat.suck(address(0x5), address(this), 1000000 ether * 1e27);
         assertEq(vat.dai(address(this)),      1010000 ether * 1e27);
@@ -111,7 +123,8 @@ contract BammJoinTest is DssDeployTestBase {
         assertEq(vat.gem("ETH", address(bamm)), expectedEth, "gem balance low ink");
         assertEq(vat.dai(address(0x123)), 1e27);
 
-        uint daiDebt = uint(100 ether * 110 * 105) / 100;
+        // 100 ether to dai with 5% premium
+        uint daiDebt = 100 * (uint(100 ether * 110) / 105);
         assertEq(vat.dai(address(vow)), daiDebt * 1e27);
         assertEq(dog.Dirt(), 0);
         (,,,uint dirt) = dog.ilks("ETH");
@@ -124,9 +137,9 @@ contract BammJoinTest is DssDeployTestBase {
         spotter.poke("ETH");
         pipETH.poke(bytes32(uint(9 * 1e18)));
 
-        uint kickBefore = blipper.kicks();
+        uint kickBefore = clipper.kicks();
         dog.bark("ETH", address(this), address(0x123));
-        uint kickAfter = blipper.kicks();
+        uint kickAfter = clipper.kicks();
 
         assertEq(kickBefore + 1, kickAfter, "testBarkWithClipper: expected auction to start");
         assertEq(vat.dai(address(0x123)), 1e27);
@@ -136,6 +149,8 @@ contract BammJoinTest is DssDeployTestBase {
         assertEq(dog.Dirt(), daiDebt * 1e27);
         (,,,uint dirt) = dog.ilks("ETH");
         assertEq(dirt, daiDebt * 1e27);
+
+        assertEq(vat.gem("ETH", address(clipper)), 100 ether);
     }    
 }
 
