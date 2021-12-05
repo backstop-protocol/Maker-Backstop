@@ -198,6 +198,7 @@ contract Blipper {
             emit Blip(tab, lot, usr, kpr, amt, owe);
             return 0;
         } catch {
+            vat.flux(ilk, address(this), clipper, lot);
             return ClipperLike(clipper).kick(tab, lot, usr, kpr);
         }
     }

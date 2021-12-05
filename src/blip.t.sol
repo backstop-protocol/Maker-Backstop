@@ -149,6 +149,8 @@ contract BammJoinTest is DssDeployTestBase {
         assertEq(dog.Dirt(), daiDebt * 1e27);
         (,,,uint dirt) = dog.ilks("ETH");
         assertEq(dirt, daiDebt * 1e27);
+
+        assertEq(vat.gem("ETH", address(clipper)), 100 ether);
     }    
 }
 
